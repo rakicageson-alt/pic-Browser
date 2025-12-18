@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Christmas Showroom Fixed</title>
+    <title>Ultimate Christmas Showroom: Pro Ratio</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -43,7 +43,7 @@
 </head>
 <body>
 
-    <div id="loading">Adjusting Light Levels...</div>
+    <div id="loading">Loading Gold & Geometry...</div>
     <div class="header">SHOW ROOM</div>
     
     <div id="ui-layer">
@@ -79,7 +79,7 @@
         import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
         // --- CONFIG ---
-        // 你的图片设置
+        // 请确保图片数量正确
         const IMAGE_URLS = Array.from({ length: 7 }, (_, i) => `./${(i + 1).toString().padStart(2, '0')}.jpg`);
 
         const PARTICLE_COUNT = 3500;
@@ -97,7 +97,7 @@
         // --- SCENE ---
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x000000, 0.02);
+        scene.fog = new THREE.FogExp2(0x000000, 0.025); // 稍微加重一点雾，增强景深感
 
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
         const CAM_DEFAULT_POS = new THREE.Vector3(0, 10, 65);
@@ -107,33 +107,35 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         
-        // 使用环境贴图实现金属反射
+        // Environment for Reflection
         const pmremGenerator = new THREE.PMREMGenerator(renderer);
         scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
         
-        // 重要：开启色调映射，防止高亮溢出
+        // Tone Mapping: 调节曝光，平衡亮部和暗部
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.9;
+        renderer.toneMappingExposure = 0.8; 
         container.appendChild(renderer.domElement);
 
-        // --- BLOOM FIX (关键修改) ---
+        // --- GLOW EFFECT (BLOOM) ---
         const renderScene = new RenderPass(scene, camera);
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
         
-        // 1. 提高阈值：只有非常亮的东西(>0.9)才会发光，普通图片(0-1.0)不会发光
-        bloomPass.threshold = 0.9; 
-        bloomPass.strength = 1.2; 
-        bloomPass.radius = 0.8;
+        // 核心参数调整：
+        // Threshold (0.15): 允许大部分发光物体产生光晕
+        // Strength (2.2): 光晕强度很高
+        // Radius (0.6): 扩散范围适中
+        bloomPass.threshold = 0.15; 
+        bloomPass.strength = 2.2; 
+        bloomPass.radius = 0.6;
 
         const composer = new EffectComposer(renderer);
         composer.addPass(renderScene);
         composer.addPass(bloomPass);
 
         // Lights
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.02); // 非常暗的环境光
         scene.add(ambientLight);
-        // 主光源
-        const mainLight = new THREE.PointLight(0xffd700, 5, 100);
+        const mainLight = new THREE.PointLight(0xffd700, 3, 100);
         mainLight.position.set(10, 20, 20);
         scene.add(mainLight);
 
@@ -141,15 +143,14 @@
         const dummy = new THREE.Object3D();
         const _color = new THREE.Color();
 
-        // 1. HDR Particles (发光粒子)
-        // 使用 Standard材质 + Emissive 来突破亮度阈值
+        // 1. Glowing Particles (High Emissive)
         const particleGeo = new THREE.SphereGeometry(0.12, 4, 4);
         const particleMat = new THREE.MeshStandardMaterial({ 
-            color: 0x000000, // Base color black
-            emissive: 0xffd700, // Gold glow
-            emissiveIntensity: 5.0, // 强度5.0，远超阈值0.9，所以会剧烈发光
-            roughness: 0.1,
-            metalness: 1.0
+            color: 0x000000, 
+            emissive: 0xffd700, // 金色自发光
+            emissiveIntensity: 4.0, // 强度4.0 -> 远超阈值0.15，产生强烈光晕
+            roughness: 0.4,
+            metalness: 0.8
         });
         const particles = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_COUNT);
         const particleData = [];
@@ -161,12 +162,12 @@
             const x = Math.cos(angle) * r + (Math.random()-0.5)*2;
             const z = Math.sin(angle) * r + (Math.random()-0.5)*2;
 
-            // Explosion Logic
+            // Explosion
             const exR = 30 + Math.random() * 50;
             const exTheta = Math.random() * Math.PI * 2;
             const exPhi = Math.acos(2 * Math.random() - 1);
 
-            // Color variation
+            // Color Variation
             if (Math.random() > 0.2) particles.setColorAt(i, new THREE.Color(0xffd700)); 
             else particles.setColorAt(i, new THREE.Color(0xffffff)); 
 
@@ -182,11 +183,14 @@
         }
         scene.add(particles);
 
-        // 2. Ornaments (Metal Spheres)
+        // 2. Ornaments (Metal + Glow)
         const ornamentGeo = new THREE.SphereGeometry(0.7, 32, 32);
         const ornamentMat = new THREE.MeshStandardMaterial({
-            color: 0xffcc00, metalness: 1.0, roughness: 0.1, 
-            emissive: 0xffaa00, emissiveIntensity: 2.0 // 中等发光
+            color: 0xffcc00, 
+            metalness: 1.0, 
+            roughness: 0.1, 
+            emissive: 0xff8800, 
+            emissiveIntensity: 1.5 // 中等发光
         });
         const ornaments = new THREE.InstancedMesh(ornamentGeo, ornamentMat, ORNAMENT_COUNT);
         const ornamentData = [];
@@ -201,7 +205,7 @@
             dummy.position.set(x, y - TREE_HEIGHT/2, z);
             dummy.updateMatrix();
             ornaments.setMatrixAt(i, dummy.matrix);
-            ornaments.setColorAt(i, new THREE.Color(Math.random() > 0.4 ? 0xffd700 : 0xdd0000));
+            ornaments.setColorAt(i, new THREE.Color(Math.random() > 0.4 ? 0xffd700 : 0xff0000));
 
             ornamentData.push({
                 treePos: new THREE.Vector3(x, y - TREE_HEIGHT/2, z),
@@ -214,48 +218,79 @@
         // 3. Topper
         const topper = new THREE.Mesh(
             new THREE.OctahedronGeometry(2.5, 0),
-            new THREE.MeshStandardMaterial({ color: 0xffff00, metalness: 1.0, roughness: 0.2, emissive: 0xff8800, emissiveIntensity: 3.0 })
+            new THREE.MeshStandardMaterial({ color: 0xffff00, metalness: 1.0, roughness: 0.2, emissive: 0xffaa00, emissiveIntensity: 3.0 })
         );
         topper.position.set(0, TREE_HEIGHT/2 + 1, 0);
         scene.add(topper);
 
-        // 4. Images
-        const imageMeshes = [];
+        // 4. Images (Pro Ratio Fix)
+        const imageGroups = [];
         const textureLoader = new THREE.TextureLoader();
-        
-        // 确保图片在相机前合适的位置 (Z=45)
         const GALLERY_CENTER = new THREE.Vector3(0, 10, 45); 
 
         IMAGE_URLS.forEach((url) => {
             const group = new THREE.Group();
 
-            // Image Plane
-            // 使用 BasicMaterial，它不反光，不受光照影响，且像素值不超过1.0，所以不会触发 Bloom
+            // 关键修复：先创建默认1x1的平面
+            const geometry = new THREE.PlaneGeometry(1, 1);
+            
+            // 降低材质颜色亮度(0.8)，防止图片本身过亮触发Bloom产生光晕
             const mat = new THREE.MeshBasicMaterial({ 
-                map: textureLoader.load(url), 
+                color: 0xcccccc, // 略微变暗，避免过曝
                 side: THREE.DoubleSide, 
                 transparent: true, 
                 opacity: 0 
             });
-            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), mat);
-            
-            // Border (Emissive frame) - 边框让它发光
-            const borderGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(6.2, 6.2));
+            const mesh = new THREE.Mesh(geometry, mat);
+
+            // 边框
+            const borderGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1));
             const borderMat = new THREE.LineBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0 });
             const border = new THREE.LineSegments(borderGeo, borderMat);
-
+            
             group.add(mesh);
             group.add(border);
-
+            
+            // 默认基础尺寸
             group.userData = {
                 explodePos: new THREE.Vector3((Math.random()-0.5)*90, (Math.random()-0.5)*60, (Math.random()-0.5)*40),
                 mesh: mesh,
-                border: border
+                border: border,
+                baseScale: new THREE.Vector3(6, 6, 1) // 默认正方形 fallback
             };
-            
+
+            // 异步加载纹理并计算比例
+            textureLoader.load(url, (tex) => {
+                mat.map = tex;
+                mat.needsUpdate = true;
+
+                // 计算宽高比
+                const aspect = tex.image.width / tex.image.height;
+                let sx, sy;
+                
+                // 逻辑：让最长边等于6
+                if (aspect >= 1) {
+                    sx = 6;
+                    sy = 6 / aspect;
+                } else {
+                    sy = 6;
+                    sx = 6 * aspect;
+                }
+                
+                // 存储计算好的基础比例
+                group.userData.baseScale.set(sx, sy, 1);
+                
+                // 更新边框形状以匹配图片比例
+                group.remove(border);
+                const newBorderGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)); // Geometry stays 1x1, scaled by group
+                const newBorder = new THREE.LineSegments(newBorderGeo, borderMat);
+                // 实际上边框也会跟随 group 的 scale 缩放，所以不需要重新建 geometry，只需要确保 group scale 正确
+                group.add(border); // 加回来
+            });
+
             group.scale.set(0,0,0);
             scene.add(group);
-            imageMeshes.push(group);
+            imageGroups.push(group);
         });
 
 
@@ -265,7 +300,6 @@
             if (STATE.current === targetState) return;
             STATE.current = targetState;
 
-            // UI
             const arrows = document.querySelectorAll('.arrow');
             arrows.forEach(el => el.style.display = targetState === 'GALLERY' ? 'block' : 'none');
 
@@ -283,9 +317,10 @@
             });
 
             // Images
-            imageMeshes.forEach(group => {
+            imageGroups.forEach(group => {
                 const m = group.userData.mesh;
                 const b = group.userData.border;
+                const baseS = group.userData.baseScale;
 
                 if (targetState === 'TREE') {
                     gsap.to(group.scale, { x: 0, y: 0, z: 0, duration: 0.5 });
@@ -297,7 +332,8 @@
                     resetSelection(group);
                     const t = group.userData.explodePos;
                     gsap.to(group.position, { x: t.x, y: t.y, z: t.z, duration: dur });
-                    gsap.to(group.scale, { x: 1, y: 1, z: 1, duration: dur });
+                    // 使用 BaseScale (原始比例) 但缩小作为缩略图
+                    gsap.to(group.scale, { x: baseS.x, y: baseS.y, z: baseS.z, duration: dur }); 
                     gsap.to(group.rotation, { x: 0, y: 0, z: 0, duration: dur });
                     gsap.to(m.material, { opacity: 0.7, duration: dur });
                     gsap.to(b.material, { opacity: 0.5, duration: dur });
@@ -306,14 +342,13 @@
                     if (group !== window.selectedGroup) {
                         const t = group.userData.explodePos;
                         gsap.to(group.position, { x: t.x, y: t.y, z: t.z, duration: dur });
-                        gsap.to(group.scale, { x: 1, y: 1, z: 1, duration: dur });
-                        gsap.to(m.material, { opacity: 0.2, duration: dur }); // Dim others
+                        gsap.to(group.scale, { x: baseS.x, y: baseS.y, z: baseS.z, duration: dur });
+                        gsap.to(m.material, { opacity: 0.2, duration: dur }); 
                         gsap.to(b.material, { opacity: 0.1, duration: dur });
                     }
                 }
             });
 
-            // Topper & Camera
             if (targetState === 'TREE') {
                 gsap.to(topper.scale, { x: 1, y: 1, z: 1, duration: 1 });
                 gsap.to(camera.position, { x: CAM_DEFAULT_POS.x, y: CAM_DEFAULT_POS.y, z: CAM_DEFAULT_POS.z, duration: 1.5 });
@@ -330,21 +365,25 @@
             if (window.selectedGroup) {
                 const old = window.selectedGroup;
                 const t = old.userData.explodePos;
+                const baseS = old.userData.baseScale;
                 gsap.to(old.position, { x: t.x, y: t.y, z: t.z, duration: 0.8 });
-                gsap.to(old.scale, { x: 1, y: 1, duration: 0.8 });
+                gsap.to(old.scale, { x: baseS.x, y: baseS.y, z: baseS.z, duration: 0.8 });
                 gsap.to(old.userData.mesh.material, { opacity: 0.2, duration: 0.8 });
             }
 
-            STATE.galleryIndex = (index + imageMeshes.length) % imageMeshes.length;
-            const targetGroup = imageMeshes[STATE.galleryIndex];
+            STATE.galleryIndex = (index + imageGroups.length) % imageGroups.length;
+            const targetGroup = imageGroups[STATE.galleryIndex];
             window.selectedGroup = targetGroup;
 
+            const baseS = targetGroup.userData.baseScale;
+            
             // Move to Center
             gsap.to(targetGroup.position, { x: GALLERY_CENTER.x, y: GALLERY_CENTER.y, z: GALLERY_CENTER.z, duration: 1.0, ease: "back.out(1.2)" });
             gsap.to(targetGroup.rotation, { x: 0, y: 0, z: 0, duration: 0.5 });
-            gsap.to(targetGroup.scale, { x: 3.5, y: 3.5, z: 3.5, duration: 1.0 });
             
-            // Highlight
+            // Scale Up (Keep Ratio) -> Multiply baseScale by 3.5
+            gsap.to(targetGroup.scale, { x: baseS.x * 3.5, y: baseS.y * 3.5, z: 1, duration: 1.0 });
+            
             gsap.to(targetGroup.userData.mesh.material, { opacity: 1.0, duration: 0.5 });
             gsap.to(targetGroup.userData.border.material, { opacity: 1.0, duration: 0.5 });
         }
@@ -357,7 +396,6 @@
             const now = Date.now();
             if (now - STATE.lastWaveTime < 500) return; 
             const delta = currX - STATE.lastHandX;
-            // 降低挥手灵敏度阈值，让它更容易触发
             if (Math.abs(delta) > 0.03) {
                 const dir = delta > 0 ? -1 : 1; 
                 const btn = dir === 1 ? document.getElementById('next-btn') : document.getElementById('prev-btn');
@@ -391,24 +429,14 @@
 
             const isEdge = currX < 0.05 || currX > 0.95 || currY > 0.95;
 
-            // --- 核心修复：手势冲突逻辑 ---
-            
-            // 1. 握拳 (Fist) -> 始终可以回到圣诞树模式
+            // Interaction Logic (No changes needed, kept stable)
             if ((fingersUp === 0 || (fingersUp === 1 && lm[8].y > lm[6].y)) && !isEdge) {
                 updateLayout('TREE');
             } 
-            // 2. 张开手掌 (Palm)
             else if (fingersUp >= 4) {
-                if (STATE.current === 'TREE') {
-                    // 如果在树模式，才允许炸开
-                    updateLayout('EXPLODED');
-                } else if (STATE.current === 'GALLERY') {
-                    // 如果已经在看图模式，忽略“炸开”指令，转而检测挥手
-                    handleWave(currX);
-                }
-                // 如果已经是 EXPLODED，保持即可
+                if (STATE.current === 'TREE') updateLayout('EXPLODED');
+                else if (STATE.current === 'GALLERY') handleWave(currX);
             } 
-            // 3. 食指 (Index) -> 进入看图模式
             else if (fingersUp === 1 || fingersUp === 2) {
                 if (STATE.current !== 'GALLERY') updateLayout('GALLERY');
                 else handleWave(currX);
@@ -438,6 +466,7 @@
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const d = particleData[i];
                 dummy.position.copy(d.currentPos);
+                // 闪烁逻辑增强
                 const s = 1.0 + Math.sin(time * 10 + i) * 0.5; 
                 dummy.scale.setScalar(s);
                 if (STATE.current === 'TREE') dummy.rotation.y += 0.01;
