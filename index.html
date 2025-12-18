@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golden Christmas Tree Showroom</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* UI Layer - 确保层级够高 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; }
+        
+        /* Header */
+        .header { 
+            position: absolute; top: 20px; width: 100%; text-align: center; 
+            color: #d4af37; font-size: 2rem; letter-spacing: 5px; text-shadow: 0 0 20px #d4af37;
+            font-weight: bold; pointer-events: none;
+        }
+
+        #input-video { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; }
+        
+        #loading { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #d4af37; font-size: 1.5rem; transition: opacity 0.5s; z-index: 50;
+        }
+
+        /* Gallery Arrows - 增大点击区域和可见性 */
+        .arrow {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            font-size: 6rem; color: rgba(255, 215, 0, 0.6); cursor: pointer;
+            pointer-events: auto; /* 允许点击 */
+            user-select: none; transition: 0.3s;
+            display: none; /* JS控制显示 */
+            filter: drop-shadow(0 0 10px #d4af37);
+        }
+        .arrow:hover, .arrow.active { color: #fff; scale: 1.2; filter: drop-shadow(0 0 20px #fff); }
+        #prev-btn { left: 30px; }
+        #next-btn { right: 30px; }
+
+        #gesture-hint {
+            position: absolute; bottom: 20px; right: 20px;
+            color: rgba(255,255,255,0.4); font-size: 14px; text-align: right;
+            line-height: 1.6; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">Loading Gold Experience...</div>
+    <div class="header">GOLDEN SHOWROOM</div>
+    
+    <div id="ui-layer">
+        <div id="prev-btn" class="arrow">‹</div>
+        <div id="next-btn" class="arrow">›</div>
+        <div id="gesture-hint">
+            ✊ Fist: Form Tree<br>
+            🖐 Palm: Explode & Show Thumbnails<br>
+            ☝ Index: View Image<br>
+            👋 Wave: Next/Prev
+        </div>
+    </div>
+
+    <video id="input-video"></video>
+    <div id="canvas-container"></div>
+
+    <!-- Libraries -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+        // --- CONFIGURATION ---
+        // 建议使用相对路径 "./assets/1.jpg"
+        const IMAGE_URLS = Array.from({ length: 20 }, (_, i) =>./${i + 1}.jpg);
+        // const IMAGE_URLS = Array.from({ length: 20 }, (_, i) => `https://picsum.photos/600/600?random=${i}`); // 测试用
+
+        const PARTICLE_COUNT = 3000;
+        const ORNAMENT_COUNT = 200; // 增加金球数量
+        const TREE_HEIGHT = 45;
+        const TREE_RADIUS = 18;
+
+        // --- STATE ---
+        const STATE = {
+            current: 'TREE', 
+            handX: 0.5,
+            handY: 0.5,
+            galleryIndex: 0,
+            lastHandX: 0.5,
+            lastWaveTime: 0
+        };
+
+        // --- SCENE SETUP ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const CAM_DEFAULT_POS = new THREE.Vector3(0, 10, 65);
+        camera.position.copy(CAM_DEFAULT_POS);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        
+        // --- 核心修复：物理环境贴图 (解决圆球没有金属光泽的问题) ---
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+        
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        container.appendChild(renderer.domElement);
+
+        // --- POST PROCESSING (BLOOM) ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.2; // 稍微提高阈值，让反光的高光更亮
+        bloomPass.strength = 1.5; 
+        bloomPass.radius = 0.5;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
+        scene.add(ambientLight);
+        
+        const mainLight = new THREE.PointLight(0xffd700, 5, 100);
+        mainLight.position.set(10, 20, 20);
+        scene.add(mainLight);
+        
+        const fillLight = new THREE.PointLight(0xff0000, 2, 80); // 红色补光
+        fillLight.position.set(-15, 10, 10);
+        scene.add(fillLight);
+
+        // --- GEOMETRY ---
+
+        const dummy = new THREE.Object3D();
+        const _color = new THREE.Color();
+
+        // 1. Particles (Glow points)
+        const particleGeo = new THREE.SphereGeometry(0.1, 4, 4);
+        const particleMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const particles = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_COUNT);
+        const particleData = [];
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const y = Math.random() * TREE_HEIGHT;
+            const r = (1 - y / TREE_HEIGHT) * TREE_RADIUS;
+            const angle = y * 2.5 + Math.random() * Math.PI * 2;
+            
+            const x = Math.cos(angle) * r + (Math.random()-0.5)*2;
+            const z = Math.sin(angle) * r + (Math.random()-0.5)*2;
+
+            // Explosion
+            const exR = 30 + Math.random() * 50;
+            const exTheta = Math.random() * Math.PI * 2;
+            const exPhi = Math.acos(2 * Math.random() - 1);
+            
+            // Color Logic
+            if (Math.random() > 0.15) _color.setHex(0xffd700); // Gold
+            else _color.setHex(0xffffff); // White Sparkle
+
+            particles.setColorAt(i, _color);
+            
+            dummy.position.set(x, y - TREE_HEIGHT/2, z);
+            dummy.updateMatrix();
+            particles.setMatrixAt(i, dummy.matrix);
+
+            particleData.push({
+                treePos: new THREE.Vector3(x, y - TREE_HEIGHT/2, z),
+                explodePos: new THREE.Vector3(exR * Math.sin(exPhi) * Math.cos(exTheta), exR * Math.sin(exPhi) * Math.sin(exTheta), exR * Math.cos(exPhi)),
+                currentPos: new THREE.Vector3(x, y - TREE_HEIGHT/2, z)
+            });
+        }
+        scene.add(particles);
+
+        // 2. Ornaments (High reflective metal spheres)
+        const ornamentGeo = new THREE.SphereGeometry(0.7, 32, 32); // 提高分段数让反射更平滑
+        const ornamentMat = new THREE.MeshStandardMaterial({
+            color: 0xffcc00, 
+            metalness: 1.0,  // 完全金属
+            roughness: 0.15, // 非常光滑
+            emissive: 0x221100
+        });
+        const ornaments = new THREE.InstancedMesh(ornamentGeo, ornamentMat, ORNAMENT_COUNT);
+        const ornamentData = [];
+
+        for(let i=0; i<ORNAMENT_COUNT; i++){
+            const y = Math.random() * (TREE_HEIGHT - 2);
+            const r = (1 - y / TREE_HEIGHT) * TREE_RADIUS * 0.85;
+            const angle = Math.random() * Math.PI * 2;
+            const x = Math.cos(angle) * r;
+            const z = Math.sin(angle) * r;
+
+            dummy.position.set(x, y - TREE_HEIGHT/2, z);
+            dummy.updateMatrix();
+            ornaments.setMatrixAt(i, dummy.matrix);
+            // Randomly red or gold
+            ornaments.setColorAt(i, new THREE.Color(Math.random() > 0.3 ? 0xffd700 : 0xaa0000));
+
+            ornamentData.push({
+                treePos: new THREE.Vector3(x, y - TREE_HEIGHT/2, z),
+                explodePos: new THREE.Vector3((Math.random()-0.5)*80, (Math.random()-0.5)*80, (Math.random()-0.5)*80),
+                currentPos: new THREE.Vector3(x, y - TREE_HEIGHT/2, z)
+            });
+        }
+        scene.add(ornaments);
+
+        // 3. Topper
+        const topper = new THREE.Mesh(
+            new THREE.OctahedronGeometry(2.5, 0),
+            new THREE.MeshStandardMaterial({ color: 0xffff00, metalness: 1.0, roughness: 0.2, emissive: 0xaa5500 })
+        );
+        topper.position.set(0, TREE_HEIGHT/2 + 1, 0);
+        scene.add(topper);
+
+        // 4. Images (Meshes)
+        const imageMeshes = [];
+        const textureLoader = new THREE.TextureLoader();
+        
+        IMAGE_URLS.forEach((url) => {
+            const mat = new THREE.MeshBasicMaterial({ 
+                map: textureLoader.load(url), 
+                side: THREE.DoubleSide, 
+                transparent: true, 
+                opacity: 0 // Start invisible
+            });
+            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), mat);
+            
+            mesh.userData = {
+                explodePos: new THREE.Vector3((Math.random()-0.5)*90, (Math.random()-0.5)*60, (Math.random()-0.5)*40),
+            };
+            // 初始 scale 0
+            mesh.scale.set(0,0,0);
+            scene.add(mesh);
+            imageMeshes.push(mesh);
+        });
+
+        // --- INTERACTION ---
+
+        const GALLERY_CENTER = new THREE.Vector3(0, 10, 50); // Image target pos
+
+        function updateLayout(targetState) {
+            if (STATE.current === targetState) return;
+            STATE.current = targetState;
+
+            // UI Arrows: Only show in Gallery
+            const arrows = document.querySelectorAll('.arrow');
+            if (targetState === 'GALLERY') {
+                arrows.forEach(el => el.style.display = 'block');
+            } else {
+                arrows.forEach(el => el.style.display = 'none');
+            }
+
+            const dur = 1.2;
+
+            // Animate Particles & Ornaments
+            particleData.forEach(d => {
+                const t = targetState === 'TREE' ? d.treePos : d.explodePos;
+                gsap.to(d.currentPos, { x: t.x, y: t.y, z: t.z, duration: dur + Math.random(), ease: "power2.inOut" });
+            });
+            ornamentData.forEach(d => {
+                const t = targetState === 'TREE' ? d.treePos : d.explodePos;
+                gsap.to(d.currentPos, { x: t.x, y: t.y, z: t.z, duration: dur, ease: "power2.out" });
+            });
+
+            // Animate Images
+            // 核心修复：Exploded状态下图片要显示，Tree状态下要消失
+            imageMeshes.forEach(mesh => {
+                if (targetState === 'TREE') {
+                    // Hide
+                    gsap.to(mesh.scale, { x: 0, y: 0, z: 0, duration: 0.5 });
+                    gsap.to(mesh.material, { opacity: 0, duration: 0.5 });
+                    resetGalleryImage(mesh);
+                } 
+                else if (targetState === 'EXPLODED') {
+                    // Show Thumbnails (scattered)
+                    // Reset gallery selection if any
+                    resetGalleryImage(mesh); 
+                    
+                    const t = mesh.userData.explodePos;
+                    gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: dur });
+                    gsap.to(mesh.scale, { x: 1, y: 1, z: 1, duration: dur }); // Scale up to 1
+                    gsap.to(mesh.material, { opacity: 0.8, duration: dur });
+                    gsap.to(mesh.rotation, { x: 0, y: 0, z: 0, duration: dur });
+                }
+            });
+
+            // Topper & Camera
+            if (targetState === 'TREE') {
+                gsap.to(topper.scale, { x: 1, y: 1, z: 1, duration: 1 });
+                gsap.to(camera.position, { x: CAM_DEFAULT_POS.x, y: CAM_DEFAULT_POS.y, z: CAM_DEFAULT_POS.z, duration: 1.5 });
+            } else {
+                gsap.to(topper.scale, { x: 0, y: 0, z: 0, duration: 0.5 });
+            }
+
+            if (targetState === 'GALLERY') {
+                selectImage(STATE.galleryIndex);
+            }
+        }
+
+        function selectImage(index) {
+            // Unselect previous
+            if (window.selectedImageMesh) {
+                const old = window.selectedImageMesh;
+                const t = old.userData.explodePos;
+                // Return to exploded spot
+                gsap.to(old.position, { x: t.x, y: t.y, z: t.z, duration: 0.8 });
+                gsap.to(old.scale, { x: 1, y: 1, duration: 0.8 });
+                gsap.to(old.material, { opacity: 0.8, duration: 0.8 });
+            }
+
+            STATE.galleryIndex = (index + imageMeshes.length) % imageMeshes.length;
+            const target = imageMeshes[STATE.galleryIndex];
+            window.selectedImageMesh = target;
+
+            // Move Selected to Center
+            gsap.to(target.position, { x: GALLERY_CENTER.x, y: GALLERY_CENTER.y, z: GALLERY_CENTER.z, duration: 1.0, ease: "back.out(1.2)" });
+            gsap.to(target.rotation, { x: 0, y: 0, z: 0, duration: 0.5 }); // Face forward
+            gsap.to(target.scale, { x: 5, y: 5, duration: 1.0 }); // Big
+            gsap.to(target.material, { opacity: 1.0, duration: 0.5 });
+        }
+
+        function resetGalleryImage(mesh) {
+            if(mesh === window.selectedImageMesh) window.selectedImageMesh = null;
+        }
+
+        // --- HANDS & AI ---
+
+        function handleWave(currX) {
+            const now = Date.now();
+            if (now - STATE.lastWaveTime < 500) return; 
+            
+            const delta = currX - STATE.lastHandX;
+            if (Math.abs(delta) > 0.05) { // Fast movement
+                const dir = delta > 0 ? -1 : 1; 
+                
+                // UI Highlight
+                const btn = dir === 1 ? document.getElementById('next-btn') : document.getElementById('prev-btn');
+                if(btn) {
+                    btn.classList.add('active');
+                    setTimeout(()=>btn.classList.remove('active'), 200);
+                }
+
+                selectImage(STATE.galleryIndex + dir);
+                STATE.lastWaveTime = now;
+            }
+        }
+
+        const videoElement = document.getElementById('input-video');
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        
+        hands.onResults((results) => {
+            document.getElementById('loading').style.display = 'none';
+
+            // 核心修复：状态保持
+            // 如果手完全离开屏幕，results.multiHandLandmarks 为空，或者 length=0
+            // 直接 return，不执行任何逻辑，从而保持当前的 STATE
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                return;
+            }
+
+            const lm = results.multiHandLandmarks[0];
+            const currX = 1.0 - lm[0].x; 
+            const currY = lm[0].y;
+            
+            STATE.handX = currX;
+            STATE.handY = currY;
+
+            // Gesture Classification
+            let fingersUp = 0;
+            const tips = [8, 12, 16, 20];
+            const pips = [6, 10, 14, 18];
+            
+            // Thumb
+            if (lm[4].x < lm[3].x && lm[5].x < lm[17].x) fingersUp++;
+            else if (lm[4].x > lm[3].x && lm[5].x > lm[17].x) fingersUp++; 
+
+            for (let i = 0; i < 4; i++) { if (lm[tips[i]].y < lm[pips[i]].y) fingersUp++; }
+
+            // 核心修复：防止边缘误触复原
+            // 如果检测到握拳 (Fist)，但手在屏幕最边缘 (例如 < 5% 或 > 95%)，
+            // 可能是手正在离开屏幕的过渡帧，忽略该指令。
+            const isEdge = currX < 0.05 || currX > 0.95 || currY > 0.95;
+
+            if ((fingersUp === 0 || (fingersUp === 1 && lm[8].y > lm[6].y)) && !isEdge) {
+                // Fist: Only if not at edge
+                updateLayout('TREE');
+            } 
+            else if (fingersUp >= 4) {
+                // Palm
+                updateLayout('EXPLODED');
+            } 
+            else if (fingersUp === 1 || fingersUp === 2) {
+                // Pointing -> Gallery
+                if (STATE.current !== 'GALLERY') {
+                    updateLayout('GALLERY');
+                } else {
+                    handleWave(currX);
+                }
+            }
+
+            STATE.lastHandX = currX;
+        });
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cameraUtils.start();
+
+        // Mouse Events
+        document.getElementById('prev-btn').addEventListener('click', () => selectImage(STATE.galleryIndex - 1));
+        document.getElementById('next-btn').addEventListener('click', () => selectImage(STATE.galleryIndex + 1));
+
+        // --- ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+        const treeGroup = new THREE.Group();
+        treeGroup.add(particles);
+        treeGroup.add(ornaments);
+        treeGroup.add(topper);
+        scene.add(treeGroup);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            // 1. Update InstancedMeshes
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const d = particleData[i];
+                dummy.position.copy(d.currentPos);
+                
+                // Twinkle
+                const s = 1.0 + Math.sin(time * 8 + i) * 0.4;
+                dummy.scale.setScalar(s);
+                
+                // Gentle motion
+                if (STATE.current === 'TREE') dummy.rotation.y += 0.01;
+                else dummy.position.y += Math.sin(time + i) * 0.01;
+                
+                dummy.updateMatrix();
+                particles.setMatrixAt(i, dummy.matrix);
+            }
+            particles.instanceMatrix.needsUpdate = true;
+
+            for (let i = 0; i < ORNAMENT_COUNT; i++) {
+                const d = ornamentData[i];
+                dummy.position.copy(d.currentPos);
+                dummy.scale.setScalar(1);
+                dummy.updateMatrix();
+                ornaments.setMatrixAt(i, dummy.matrix);
+            }
+            ornaments.instanceMatrix.needsUpdate = true;
+
+            // 2. Camera / Group Rotation
+            if (STATE.current === 'TREE') {
+                treeGroup.rotation.y = time * 0.15; 
+            } 
+            else if (STATE.current === 'EXPLODED') {
+                // Parallax control by hand
+                const tx = (STATE.handX - 0.5) * 12;
+                const ty = (STATE.handY - 0.5) * 6;
+                gsap.to(treeGroup.rotation, { y: tx * 0.2, x: ty * 0.1, duration: 1 });
+                // Also float images slightly
+                imageMeshes.forEach((m, i) => {
+                    if (m !== window.selectedImageMesh) {
+                        m.lookAt(camera.position); // Always face cam
+                    }
+                });
+            }
+
+            topper.rotation.y += 0.02;
+
+            composer.render();
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
