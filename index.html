@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Christmas Showroom</title>
+    <title>Ultimate Christmas Showroom Fixed</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -24,7 +24,6 @@
             color: #d4af37; font-size: 1.5rem; transition: opacity 0.5s; z-index: 50; text-shadow: 0 0 10px black;
         }
 
-        /* Arrows */
         .arrow {
             position: absolute; top: 50%; transform: translateY(-50%);
             font-size: 6rem; color: rgba(255, 215, 0, 0.5); cursor: pointer;
@@ -44,17 +43,16 @@
 </head>
 <body>
 
-    <div id="loading">Loading Light & Magic...</div>
+    <div id="loading">Adjusting Light Levels...</div>
     <div class="header">SHOW ROOM</div>
     
     <div id="ui-layer">
         <div id="prev-btn" class="arrow">‹</div>
         <div id="next-btn" class="arrow">›</div>
         <div id="gesture-hint">
-            ✊ Fist: Tree<br>
-            🖐 Palm: Explode<br>
-            ☝ Index: Gallery<br>
-            👋 Wave: Swap Image
+            ✊ Fist: Tree (Reset)<br>
+            🖐 Palm: Explode / Wave<br>
+            ☝ Index: Select Image
         </div>
     </div>
 
@@ -81,10 +79,10 @@
         import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
         // --- CONFIG ---
-        // 确保你的图片路径正确。如果是本地服务器
+        // 你的图片设置
         const IMAGE_URLS = Array.from({ length: 7 }, (_, i) => `./${(i + 1).toString().padStart(2, '0')}.jpg`);
 
-        const PARTICLE_COUNT = 3000;
+        const PARTICLE_COUNT = 3500;
         const ORNAMENT_COUNT = 250;
         const TREE_HEIGHT = 45;
         const TREE_RADIUS = 18;
@@ -109,21 +107,23 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         
-        // Environment for Metal Reflection
+        // 使用环境贴图实现金属反射
         const pmremGenerator = new THREE.PMREMGenerator(renderer);
         scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+        
+        // 重要：开启色调映射，防止高亮溢出
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 0.9;
         container.appendChild(renderer.domElement);
 
-        // --- GLOW EFFECT (BLOOM) ---
+        // --- BLOOM FIX (关键修改) ---
         const renderScene = new RenderPass(scene, camera);
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
         
-        // 修复：增强光晕参数
-        bloomPass.threshold = 0;   // 阈值设为0，让所有发光物体都产生光晕
-        bloomPass.strength = 2.5;  // 强度大幅提升
-        bloomPass.radius = 1.0;    // 扩散半径增大
+        // 1. 提高阈值：只有非常亮的东西(>0.9)才会发光，普通图片(0-1.0)不会发光
+        bloomPass.threshold = 0.9; 
+        bloomPass.strength = 1.2; 
+        bloomPass.radius = 0.8;
 
         const composer = new EffectComposer(renderer);
         composer.addPass(renderScene);
@@ -132,6 +132,7 @@
         // Lights
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
         scene.add(ambientLight);
+        // 主光源
         const mainLight = new THREE.PointLight(0xffd700, 5, 100);
         mainLight.position.set(10, 20, 20);
         scene.add(mainLight);
@@ -140,9 +141,16 @@
         const dummy = new THREE.Object3D();
         const _color = new THREE.Color();
 
-        // 1. Gold/Light Particles
+        // 1. HDR Particles (发光粒子)
+        // 使用 Standard材质 + Emissive 来突破亮度阈值
         const particleGeo = new THREE.SphereGeometry(0.12, 4, 4);
-        const particleMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const particleMat = new THREE.MeshStandardMaterial({ 
+            color: 0x000000, // Base color black
+            emissive: 0xffd700, // Gold glow
+            emissiveIntensity: 5.0, // 强度5.0，远超阈值0.9，所以会剧烈发光
+            roughness: 0.1,
+            metalness: 1.0
+        });
         const particles = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_COUNT);
         const particleData = [];
 
@@ -158,10 +166,9 @@
             const exTheta = Math.random() * Math.PI * 2;
             const exPhi = Math.acos(2 * Math.random() - 1);
 
-            // Color: Gold & White
-            if (Math.random() > 0.2) _color.setHex(0xffd700); 
-            else _color.setHex(0xffffff); 
-            particles.setColorAt(i, _color);
+            // Color variation
+            if (Math.random() > 0.2) particles.setColorAt(i, new THREE.Color(0xffd700)); 
+            else particles.setColorAt(i, new THREE.Color(0xffffff)); 
 
             dummy.position.set(x, y - TREE_HEIGHT/2, z);
             dummy.updateMatrix();
@@ -175,10 +182,11 @@
         }
         scene.add(particles);
 
-        // 2. Metal Ornaments
+        // 2. Ornaments (Metal Spheres)
         const ornamentGeo = new THREE.SphereGeometry(0.7, 32, 32);
         const ornamentMat = new THREE.MeshStandardMaterial({
-            color: 0xffcc00, metalness: 1.0, roughness: 0.1, emissive: 0x221100
+            color: 0xffcc00, metalness: 1.0, roughness: 0.1, 
+            emissive: 0xffaa00, emissiveIntensity: 2.0 // 中等发光
         });
         const ornaments = new THREE.InstancedMesh(ornamentGeo, ornamentMat, ORNAMENT_COUNT);
         const ornamentData = [];
@@ -206,7 +214,7 @@
         // 3. Topper
         const topper = new THREE.Mesh(
             new THREE.OctahedronGeometry(2.5, 0),
-            new THREE.MeshStandardMaterial({ color: 0xffff00, metalness: 1.0, roughness: 0.2, emissive: 0xff8800 })
+            new THREE.MeshStandardMaterial({ color: 0xffff00, metalness: 1.0, roughness: 0.2, emissive: 0xff8800, emissiveIntensity: 3.0 })
         );
         topper.position.set(0, TREE_HEIGHT/2 + 1, 0);
         scene.add(topper);
@@ -215,14 +223,14 @@
         const imageMeshes = [];
         const textureLoader = new THREE.TextureLoader();
         
-        // 修复：图片位置和辅助框
-        // 图片应该在摄像机前方 Z=45 左右 (摄像机在 Z=65)
+        // 确保图片在相机前合适的位置 (Z=45)
         const GALLERY_CENTER = new THREE.Vector3(0, 10, 45); 
 
         IMAGE_URLS.forEach((url) => {
             const group = new THREE.Group();
 
             // Image Plane
+            // 使用 BasicMaterial，它不反光，不受光照影响，且像素值不超过1.0，所以不会触发 Bloom
             const mat = new THREE.MeshBasicMaterial({ 
                 map: textureLoader.load(url), 
                 side: THREE.DoubleSide, 
@@ -231,7 +239,7 @@
             });
             const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), mat);
             
-            // Border (Frame) - 即使图片加载失败也能看到框
+            // Border (Emissive frame) - 边框让它发光
             const borderGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(6.2, 6.2));
             const borderMat = new THREE.LineBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0 });
             const border = new THREE.LineSegments(borderGeo, borderMat);
@@ -239,14 +247,12 @@
             group.add(mesh);
             group.add(border);
 
-            // Metadata
             group.userData = {
                 explodePos: new THREE.Vector3((Math.random()-0.5)*90, (Math.random()-0.5)*60, (Math.random()-0.5)*40),
                 mesh: mesh,
                 border: border
             };
             
-            // Initial State: Hidden
             group.scale.set(0,0,0);
             scene.add(group);
             imageMeshes.push(group);
@@ -264,10 +270,9 @@
             arrows.forEach(el => el.style.display = targetState === 'GALLERY' ? 'block' : 'none');
 
             const dur = 1.2;
-
-            // 1. Particles (In Gallery mode, we use Exploded background)
             const bgState = (targetState === 'GALLERY') ? 'EXPLODED' : targetState;
             
+            // Particles
             particleData.forEach(d => {
                 const t = bgState === 'TREE' ? d.treePos : d.explodePos;
                 gsap.to(d.currentPos, { x: t.x, y: t.y, z: t.z, duration: dur + Math.random(), ease: "power2.inOut" });
@@ -277,20 +282,18 @@
                 gsap.to(d.currentPos, { x: t.x, y: t.y, z: t.z, duration: dur, ease: "power2.out" });
             });
 
-            // 2. Images Logic
+            // Images
             imageMeshes.forEach(group => {
                 const m = group.userData.mesh;
                 const b = group.userData.border;
 
                 if (targetState === 'TREE') {
-                    // All hidden
                     gsap.to(group.scale, { x: 0, y: 0, z: 0, duration: 0.5 });
                     gsap.to(m.material, { opacity: 0, duration: 0.5 });
                     gsap.to(b.material, { opacity: 0, duration: 0.5 });
                     resetSelection(group);
                 } 
                 else if (targetState === 'EXPLODED') {
-                    // Show scattered thumbnails
                     resetSelection(group);
                     const t = group.userData.explodePos;
                     gsap.to(group.position, { x: t.x, y: t.y, z: t.z, duration: dur });
@@ -300,14 +303,12 @@
                     gsap.to(b.material, { opacity: 0.5, duration: dur });
                 }
                 else if (targetState === 'GALLERY') {
-                    // If this image is NOT the selected one, treat it like EXPLODED (scattered background)
-                    // If it IS selected, selectImage() handles it below.
                     if (group !== window.selectedGroup) {
                         const t = group.userData.explodePos;
                         gsap.to(group.position, { x: t.x, y: t.y, z: t.z, duration: dur });
                         gsap.to(group.scale, { x: 1, y: 1, z: 1, duration: dur });
-                        gsap.to(m.material, { opacity: 0.3, duration: dur }); // Dim others
-                        gsap.to(b.material, { opacity: 0.2, duration: dur });
+                        gsap.to(m.material, { opacity: 0.2, duration: dur }); // Dim others
+                        gsap.to(b.material, { opacity: 0.1, duration: dur });
                     }
                 }
             });
@@ -326,13 +327,12 @@
         }
 
         function selectImage(index) {
-            // Unselect previous
             if (window.selectedGroup) {
                 const old = window.selectedGroup;
                 const t = old.userData.explodePos;
                 gsap.to(old.position, { x: t.x, y: t.y, z: t.z, duration: 0.8 });
                 gsap.to(old.scale, { x: 1, y: 1, duration: 0.8 });
-                gsap.to(old.userData.mesh.material, { opacity: 0.3, duration: 0.8 });
+                gsap.to(old.userData.mesh.material, { opacity: 0.2, duration: 0.8 });
             }
 
             STATE.galleryIndex = (index + imageMeshes.length) % imageMeshes.length;
@@ -342,10 +342,9 @@
             // Move to Center
             gsap.to(targetGroup.position, { x: GALLERY_CENTER.x, y: GALLERY_CENTER.y, z: GALLERY_CENTER.z, duration: 1.0, ease: "back.out(1.2)" });
             gsap.to(targetGroup.rotation, { x: 0, y: 0, z: 0, duration: 0.5 });
-            // Scale Up (Fit Screen)
             gsap.to(targetGroup.scale, { x: 3.5, y: 3.5, z: 3.5, duration: 1.0 });
             
-            // Make Visible
+            // Highlight
             gsap.to(targetGroup.userData.mesh.material, { opacity: 1.0, duration: 0.5 });
             gsap.to(targetGroup.userData.border.material, { opacity: 1.0, duration: 0.5 });
         }
@@ -358,7 +357,8 @@
             const now = Date.now();
             if (now - STATE.lastWaveTime < 500) return; 
             const delta = currX - STATE.lastHandX;
-            if (Math.abs(delta) > 0.05) {
+            // 降低挥手灵敏度阈值，让它更容易触发
+            if (Math.abs(delta) > 0.03) {
                 const dir = delta > 0 ? -1 : 1; 
                 const btn = dir === 1 ? document.getElementById('next-btn') : document.getElementById('prev-btn');
                 if(btn) { btn.classList.add('active'); setTimeout(()=>btn.classList.remove('active'), 200); }
@@ -376,7 +376,7 @@
         hands.onResults((results) => {
             document.getElementById('loading').style.display = 'none';
 
-            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return; // Keep State
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
 
             const lm = results.multiHandLandmarks[0];
             const currX = 1.0 - lm[0].x; 
@@ -391,14 +391,29 @@
 
             const isEdge = currX < 0.05 || currX > 0.95 || currY > 0.95;
 
+            // --- 核心修复：手势冲突逻辑 ---
+            
+            // 1. 握拳 (Fist) -> 始终可以回到圣诞树模式
             if ((fingersUp === 0 || (fingersUp === 1 && lm[8].y > lm[6].y)) && !isEdge) {
                 updateLayout('TREE');
-            } else if (fingersUp >= 4) {
-                updateLayout('EXPLODED');
-            } else if (fingersUp === 1 || fingersUp === 2) {
+            } 
+            // 2. 张开手掌 (Palm)
+            else if (fingersUp >= 4) {
+                if (STATE.current === 'TREE') {
+                    // 如果在树模式，才允许炸开
+                    updateLayout('EXPLODED');
+                } else if (STATE.current === 'GALLERY') {
+                    // 如果已经在看图模式，忽略“炸开”指令，转而检测挥手
+                    handleWave(currX);
+                }
+                // 如果已经是 EXPLODED，保持即可
+            } 
+            // 3. 食指 (Index) -> 进入看图模式
+            else if (fingersUp === 1 || fingersUp === 2) {
                 if (STATE.current !== 'GALLERY') updateLayout('GALLERY');
                 else handleWave(currX);
             }
+            
             STATE.lastHandX = currX;
         });
 
@@ -423,7 +438,7 @@
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const d = particleData[i];
                 dummy.position.copy(d.currentPos);
-                const s = 1.0 + Math.sin(time * 10 + i) * 0.5; // Stronger twinkle
+                const s = 1.0 + Math.sin(time * 10 + i) * 0.5; 
                 dummy.scale.setScalar(s);
                 if (STATE.current === 'TREE') dummy.rotation.y += 0.01;
                 else dummy.position.y += Math.sin(time + i) * 0.01;
